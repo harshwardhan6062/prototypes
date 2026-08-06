@@ -1,0 +1,11 @@
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# logs / local runtime junk
+*.log
+
+# macos
+.DS_Store

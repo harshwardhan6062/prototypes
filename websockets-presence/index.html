@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>presence</title>
+<style>
+  body { font: 15px system-ui, sans-serif; padding: 24px; max-width: 420px }
+  #who { font-weight: 700 }
+  #status { font-size: 13px; color: #888 }
+  ul { list-style: none; padding: 0 }
+  li { padding: 7px 11px; background: #e9f4ea; border-radius: 6px; margin: 5px 0 }
+  h3 { margin-bottom: 6px }
+</style>
+
+<p>You are <span id="who"></span> — <span id="status">connecting…</span></p>
+<h3>Online now</h3>
+<ul id="list"></ul>
+
+<script>
+  // who am I? from ?user=alice, else random
+  const me = new URLSearchParams(location.search).get("user")
+             || "user" + Math.floor(Math.random() * 1000);
+  document.getElementById("who").textContent = me;
+
+  const status = document.getElementById("status");
+  const list = document.getElementById("list");
+
+  const ws = new WebSocket("ws://localhost:8765");
+
+  ws.onopen = () => {
+    status.textContent = "connected";
+    ws.send(me);                    // identify ourselves
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === "presence") {
+      list.innerHTML = msg.online
+        .map(u => `<li>${u}${u === me ? " <em>(you)</em>" : ""}</li>`)
+        .join("");
+    }
+  };
+
+  ws.onclose = () => { status.textContent = "disconnected"; };
+</script>
