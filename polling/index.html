@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Push mechanisms, side by side</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --plane:          #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --axis:           #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+
+    --s-short:  #2a78d6;
+    --s-long:   #eda100;
+    --s-sse:    #e87ba4;
+    --s-ws:     #008300;
+
+    --good:     #0ca30c;
+    --warning:  #fab219;
+    --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --plane:          #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --axis:           #383835;
+      --border:         rgba(255,255,255,0.10);
+      --s-short: #3987e5;
+      --s-long:  #c98500;
+      --s-sse:   #d55181;
+      --s-ws:    #008300;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --plane:          #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --axis:           #383835;
+    --border:         rgba(255,255,255,0.10);
+    --s-short: #3987e5;
+    --s-long:  #c98500;
+    --s-sse:   #d55181;
+    --s-ws:    #008300;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .viz-root {
+    background: var(--plane);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 28px 24px 56px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 6px; }
+  h1 { font-size: 22px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--text-secondary); font-size: 14px; margin: 4px 0 0; }
+  .spacer { flex: 1; }
+
+  button {
+    font: inherit; font-size: 14px;
+    padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary);
+    cursor: pointer;
+  }
+  button:hover { background: var(--plane); }
+  button.primary {
+    background: var(--text-primary); color: var(--surface-1);
+    border-color: var(--text-primary); font-weight: 600;
+  }
+  button.primary:hover { opacity: .88; }
+
+  .controls {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 22px 0 20px; padding: 14px 16px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+  }
+  .controls label {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 14px; color: var(--text-secondary); cursor: pointer;
+  }
+  .elapsed {
+    margin-left: auto; font-size: 13px; color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 900px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 12px; padding: 0; overflow: hidden;
+  }
+  .card-top { height: 3px; }
+  .card-body { padding: 14px 16px 16px; }
+  .card h2 {
+    font-size: 13px; font-weight: 650; margin: 0 0 2px;
+    display: flex; align-items: center; gap: 7px; color: var(--text-primary);
+  }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .mech { font-size: 12px; color: var(--text-muted); margin: 0 0 12px; }
+
+  .figure { font-size: 34px; font-weight: 640; line-height: 1.05; letter-spacing: -0.02em; }
+  .figure-label { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+
+  .subs { display: flex; gap: 18px; margin-top: 14px; }
+  .sub-val { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .sub-lab { font-size: 11px; color: var(--text-muted); }
+
+  .status {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; margin-top: 13px;
+    padding: 3px 9px 3px 7px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--text-secondary);
+  }
+  .status .icon { font-size: 11px; line-height: 1; }
+
+  .panel {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px 12px; margin-top: 16px;
+  }
+  .panel h3 { font-size: 15px; font-weight: 650; margin: 0 0 2px; }
+  .panel .hint { font-size: 13px; color: var(--text-secondary); margin: 0 0 4px; }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 12px 0 2px; }
+  .legend-item {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 13px; color: var(--text-secondary);
+  }
+
+  svg { display: block; width: 100%; overflow: visible; }
+  .grid-line { stroke: var(--grid); stroke-width: 1; }
+  .axis-line { stroke: var(--axis); stroke-width: 1; }
+  .tick { fill: var(--text-muted); font-size: 11px; }
+  .series-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .dlabel { font-size: 11px; font-weight: 650; fill: var(--text-secondary); }
+
+  .tooltip {
+    position: fixed; pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 9px; padding: 9px 11px; font-size: 12px;
+    box-shadow: 0 6px 22px rgba(0,0,0,.13); z-index: 20; min-width: 148px;
+  }
+  .tt-head { font-weight: 650; margin-bottom: 6px; color: var(--text-primary); }
+  .tt-row { display: flex; align-items: center; gap: 7px; margin-top: 3px; color: var(--text-secondary); }
+  .tt-val { margin-left: auto; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 10px; }
+  th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; font-variant-numeric: normal; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
+  [hidden] { display: none !important; }
+
+  .trace {
+    font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    height: 300px; overflow-y: auto; margin-top: 10px;
+    border: 1px solid var(--border); border-radius: 9px;
+    background: var(--plane); padding: 8px 4px;
+  }
+  .row {
+    display: grid; grid-template-columns: 54px 18px 108px 1fr;
+    gap: 8px; padding: 2px 10px; align-items: baseline; white-space: nowrap;
+  }
+  .row:hover { background: var(--surface-1); }
+  .row .t { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .row .arrow { font-weight: 700; }
+  .row .who { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+  .row .detail { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; }
+  .row.up   .arrow { color: var(--text-muted); }
+  .row.down .arrow { color: var(--good); }
+  .row.evt { background: color-mix(in srgb, var(--warning) 12%, transparent); }
+  .row.evt .arrow, .row.evt .detail { color: var(--text-primary); font-weight: 650; }
+  .row.err .arrow, .row.err .detail { color: var(--critical); }
+  .filters { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .filters label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); cursor: pointer; }
+
+  .note {
+    margin-top: 16px; padding: 13px 16px; font-size: 13.5px;
+    color: var(--text-secondary); background: var(--surface-1);
+    border: 1px solid var(--border); border-left: 3px solid var(--s-short);
+    border-radius: 0 10px 10px 0;
+  }
+  .note b { color: var(--text-primary); }
+</style>
+</head>
+
+<body>
+<div class="viz-root">
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Four ways to learn something happened</h1>
+      <p class="sub">One event. Four delivery mechanisms. Watch what each one costs.</p>
+    </div>
+    <div class="spacer"></div>
+    <button id="theme">Dark</button>
+  </header>
+
+  <div class="controls">
+    <button class="primary" id="send">Send a message</button>
+    <label><input type="checkbox" id="auto"> Auto-send every 5s</label>
+    <button id="drop">Drop all connections</button>
+    <label><input type="checkbox" id="reconnect" checked> WebSocket auto-reconnect</label>
+    <span class="elapsed" id="elapsed">0s elapsed</span>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <section class="panel">
+    <h3>Wire trace</h3>
+    <p class="hint">
+      Every message crossing the boundary. <b>↑</b> client&nbsp;→&nbsp;server,
+      <b>↓</b> server&nbsp;→&nbsp;client.
+    </p>
+    <div class="filters" id="filters"></div>
+    <div class="trace" id="trace"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;padding:8px 0 2px">
+      <button id="pause">Pause</button>
+      <button id="clear">Clear</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>Cumulative requests</h3>
+    <p class="hint">Every HTTP round trip each mechanism has made since the page loaded.</p>
+    <div class="legend" id="legend"></div>
+    <svg id="chart" viewBox="0 0 1100 300" role="img"
+         aria-label="Cumulative requests over time for four push mechanisms"></svg>
+    <div style="display:flex;justify-content:flex-end;padding:4px 0 6px">
+      <button id="toggleTable">Show table</button>
+    </div>
+    <div id="tableWrap" hidden></div>
+  </section>
+
+  <p class="note" id="note">
+    <b>Try this:</b> click <b>Send a message</b> and watch the latency figures.
+    Then hit <b>Drop all connections</b> — three come back on their own.
+    Untick <b>WebSocket auto-reconnect</b> and drop again to see the one that doesn't.
+  </p>
+
+</div>
+</div>
+
+<div class="tooltip" id="tip"></div>
+
+<script>
+const MECHS = [
+  {key:'short', name:'Short polling', mech:'asks every 2s',        color:'var(--s-short)'},
+  {key:'long',  name:'Long polling',  mech:'server holds the request', color:'var(--s-long)'},
+  {key:'sse',   name:'SSE',           mech:'one stream, many events',  color:'var(--s-sse)'},
+  {key:'ws',    name:'WebSocket',     mech:'two-way socket',           color:'var(--s-ws)'},
+];
+
+const state = {};
+MECHS.forEach(m => state[m.key] = {
+  requests: 0, messages: 0, latency: null, cursor: 0, status: 'connecting'
+});
+
+const T0 = performance.now();
+let lastSendAt = null;
+const history = [];
+
+const elapsed = () => (performance.now() - T0) / 1000;
+const $ = id => document.getElementById(id);
+
+function noticed(key) {
+  state[key].messages++;
+  if (lastSendAt !== null) state[key].latency = performance.now() - lastSendAt;
+}
+
+// ------------------------------------------------------------- wire trace
+
+const COLOR = Object.fromEntries(MECHS.map(m => [m.key, m.color]));
+COLOR.you = 'var(--text-primary)';
+const show = {short: true, long: true, sse: true, ws: true, you: true};
+let paused = false;
+
+function wire(dir, key, detail) {
+  if (paused || !show[key]) return;
+  const el = document.createElement('div');
+  const cls = dir === '↑' ? 'up' : dir === '⚡' ? 'evt' : dir === '✕' ? 'err' : 'down';
+  el.className = `row ${cls}`;
+  el.innerHTML =
+    `<span class="t">${elapsed().toFixed(1)}s</span>` +
+    `<span class="arrow">${dir}</span>` +
+    `<span class="who"><span class="swatch" style="background:${COLOR[key]}"></span>${key}</span>` +
+    `<span class="detail">${detail}</span>`;
+  const box = $('trace');
+  const stuck = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  box.appendChild(el);
+  while (box.childElementCount > 250) box.firstChild.remove();
+  if (stuck) box.scrollTop = box.scrollHeight;
+}
+
+// ---------------------------------------------------------------- transports
+
+async function shortPolling() {
+  while (true) {
+    const s = state.short;
+    try {
+      wire('↑', 'short', `GET /api/short?since=${s.cursor}`);
+      const r = await fetch(`/api/short?since=${s.cursor}`);
+      s.requests++; s.status = 'ok';
+      const d = await r.json();
+      s.cursor = d.cursor;
+      if (d.messages.length) { noticed('short'); wire('↓', 'short', `200 — ${d.messages.length} new`); }
+      else wire('↓', 'short', '200 — nothing new');
+    } catch { s.status = 'down'; wire('✕', 'short', 'request failed'); }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+
+async function longPolling() {
+  while (true) {
+    const s = state.long;
+    try {
+      s.requests++; s.status = 'waiting';
+      wire('↑', 'long', `GET /api/long?since=${s.cursor} — server holds it`);
+      const r = await fetch(`/api/long?since=${s.cursor}`);
+      const d = await r.json();
+      s.status = 'ok'; s.cursor = d.cursor;
+      if (d.messages.length) { noticed('long'); wire('↓', 'long', `200 — ${d.messages.length} new, connection closes`); }
+      else wire('↓', 'long', '200 — timed out, nothing new');
+    } catch {
+      s.status = 'down'; wire('✕', 'long', 'request failed');
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+}
+
+let es = null;
+function startSSE() {
+  wire('↑', 'sse', 'GET /api/sse — Accept: text/event-stream');
+  es = new EventSource('/api/sse');
+  state.sse.requests++;
+  es.onopen = () => { state.sse.status = 'ok'; wire('↓', 'sse', '200 — stream open, stays open'); };
+  es.onmessage = e => {
+    const m = JSON.parse(e.data);
+    state.sse.cursor = m.id;
+    noticed('sse');
+    wire('↓', 'sse', `id: ${m.id} — pushed down the open stream`);
+  };
+  es.onerror = () => {
+    if (state.sse.status !== 'down') wire('✕', 'sse', 'stream dropped — browser will reconnect itself');
+    state.sse.status = 'down';
+    setTimeout(() => {
+      if (es.readyState === 0) {
+        state.sse.requests++;
+        wire('↑', 'sse', `reconnecting — Last-Event-ID: ${state.sse.cursor}`);
+      }
+    }, 50);
+  };
+}
+
+let ws = null, wsDelay = 500;
+function startWS() {
+  wire('↑', 'ws', 'GET /api/ws — Upgrade: websocket');
+  ws = new WebSocket(`ws://${location.host}/api/ws`);
+  state.ws.requests++;
+  ws.onopen = () => {
+    state.ws.status = 'ok'; wsDelay = 500;
+    wire('↓', 'ws', '101 Switching Protocols — socket open');
+    ws.send(JSON.stringify({resume_from: state.ws.cursor}));
+    wire('↑', 'ws', `{resume_from: ${state.ws.cursor}} — my own bookmark`);
+  };
+  ws.onmessage = e => {
+    const d = JSON.parse(e.data);
+    state.ws.cursor = d.cursor;
+    noticed('ws');
+    wire('↓', 'ws', `${d.messages.length} message(s) — pushed down the socket`);
+  };
+  ws.onclose = () => {
+    state.ws.status = 'down';
+    if (!$('reconnect').checked) {
+      wire('✕', 'ws', 'socket closed — auto-reconnect OFF, dead until you reload');
+      return;
+    }
+    const jitter = Math.round(Math.random() * wsDelay);
+    wire('✕', 'ws', `socket closed — retrying in ${wsDelay + jitter}ms (backoff + jitter)`);
+    setTimeout(startWS, wsDelay + jitter);
+    wsDelay = Math.min(wsDelay * 2, 15000);
+  };
+  ws.onerror = () => {};
+}
+
+// ------------------------------------------------------------------ controls
+
+$('send').onclick = async () => {
+  lastSendAt = performance.now();
+  MECHS.forEach(m => state[m.key].latency = null);
+  wire('⚡', 'you', 'POST /api/send — a message now exists on the server');
+  await fetch('/api/send', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text: 'ping'})
+  });
+};
+
+$('pause').onclick = () => {
+  paused = !paused;
+  $('pause').textContent = paused ? 'Resume' : 'Pause';
+};
+$('clear').onclick = () => $('trace').innerHTML = '';
+
+$('filters').innerHTML = [...MECHS, {key:'you', name:'your actions', color:'var(--text-primary)'}]
+  .map(m => `<label><input type="checkbox" data-k="${m.key}" checked>
+    <span class="swatch" style="background:${m.color}"></span>${m.name}</label>`).join('');
+$('filters').onchange = e => show[e.target.dataset.k] = e.target.checked;
+
+let autoTimer = null;
+$('auto').onchange = e => {
+  clearInterval(autoTimer);
+  if (e.target.checked) autoTimer = setInterval(() => $('send').click(), 5000);
+};
+
+$('drop').onclick = async () => {
+  wire('⚡', 'you', 'POST /api/drop — force-closing every open stream');
+  await fetch('/api/drop', {method: 'POST'});
+};
+
+$('theme').onclick = () => {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  document.documentElement.setAttribute('data-theme', dark ? 'light' : 'dark');
+  $('theme').textContent = dark ? 'Dark' : 'Light';
+};
+
+$('toggleTable').onclick = () => {
+  const w = $('tableWrap');
+  w.hidden = !w.hidden;
+  $('toggleTable').textContent = w.hidden ? 'Show table' : 'Hide table';
+};
+
+// -------------------------------------------------------------------- render
+
+const STATUS = {
+  ok:         {icon:'●', label:'connected', color:'var(--good)'},
+  waiting:    {icon:'◐', label:'holding',   color:'var(--warning)'},
+  connecting: {icon:'○', label:'connecting',color:'var(--text-muted)'},
+  down:       {icon:'✕', label:'dropped',   color:'var(--critical)'},
+};
+
+function buildCards() {
+  $('cards').innerHTML = MECHS.map(m => `
+    <div class="card">
+      <div class="card-top" style="background:${m.color}"></div>
+      <div class="card-body">
+        <h2><span class="swatch" style="background:${m.color}"></span>${m.name}</h2>
+        <p class="mech">${m.mech}</p>
+        <div class="figure" id="f-${m.key}">0</div>
+        <div class="figure-label">requests made</div>
+        <div class="subs">
+          <div><div class="sub-val" id="l-${m.key}">—</div><div class="sub-lab">latency</div></div>
+          <div><div class="sub-val" id="m-${m.key}">0</div><div class="sub-lab">messages</div></div>
+        </div>
+        <div class="status" id="s-${m.key}"><span class="icon">○</span>connecting</div>
+      </div>
+    </div>`).join('');
+
+  $('legend').innerHTML = MECHS.map(m => `
+    <span class="legend-item">
+      <span class="swatch" style="background:${m.color}"></span>${m.name}
+    </span>`).join('');
+}
+
+function paint() {
+  $('elapsed').textContent = `${elapsed().toFixed(0)}s elapsed`;
+  for (const m of MECHS) {
+    const s = state[m.key];
+    $(`f-${m.key}`).textContent = s.requests;
+    $(`m-${m.key}`).textContent = s.messages;
+    $(`l-${m.key}`).textContent = s.latency === null ? '—'
+      : s.latency < 1000 ? `${Math.round(s.latency)} ms`
+      : `${(s.latency / 1000).toFixed(1)} s`;
+    const st = STATUS[s.status];
+    const el = $(`s-${m.key}`);
+    el.style.color = st.color;
+    el.innerHTML = `<span class="icon">${st.icon}</span>${st.label}`;
+  }
+}
+
+// ---------------------------------------------------------------------- chart
+
+const W = 1100, H = 300, PAD = {t: 16, r: 78, b: 30, l: 46};
+
+function drawChart() {
+  const svg = $('chart');
+  if (history.length < 2) return;
+
+  const maxT = Math.max(10, history[history.length - 1].t);
+  const maxY = Math.max(4, ...history.map(p => Math.max(...MECHS.map(m => p[m.key]))));
+  const nice = Math.ceil(maxY / 4) * 4;
+
+  const x = t => PAD.l + (t / maxT) * (W - PAD.l - PAD.r);
+  const y = v => H - PAD.b - (v / nice) * (H - PAD.t - PAD.b);
+
+  let out = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = (nice / 4) * i, yy = y(v);
+    out += `<line class="grid-line" x1="${PAD.l}" y1="${yy}" x2="${W - PAD.r}" y2="${yy}"/>`;
+    out += `<text class="tick" x="${PAD.l - 9}" y="${yy + 4}" text-anchor="end">${v}</text>`;
+  }
+  out += `<line class="axis-line" x1="${PAD.l}" y1="${H - PAD.b}" x2="${W - PAD.r}" y2="${H - PAD.b}"/>`;
+  for (let i = 0; i <= 5; i++) {
+    const t = (maxT / 5) * i;
+    out += `<text class="tick" x="${x(t)}" y="${H - PAD.b + 18}" text-anchor="middle">${t.toFixed(0)}s</text>`;
+  }
+
+  const last = history[history.length - 1];
+  for (const m of MECHS) {
+    const d = history.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p[m.key]).toFixed(1)}`).join(' ');
+    out += `<path class="series-line" d="${d}" stroke="${m.color}"/>`;
+  }
+
+  // direct labels, nudged apart so equal-valued series don't overlap
+  const GAP = 14;
+  const labels = MECHS.map(m => ({m, v: last[m.key], y: y(last[m.key])}))
+                      .sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) {
+    if (labels[i].y - labels[i - 1].y < GAP) labels[i].y = labels[i - 1].y + GAP;
+  }
+  const overflow = labels[labels.length - 1].y - (H - PAD.b);
+  if (overflow > 0) labels.forEach(l => l.y -= overflow);
+
+  for (const l of labels) {
+    const ly = y(l.v), lx = W - PAD.r;
+    if (Math.abs(l.y - ly) > 2) {
+      out += `<path d="M${lx + 2},${ly} L${lx + 6},${l.y - 4}" stroke="${l.m.color}"
+               stroke-width="1" fill="none" opacity=".5"/>`;
+    }
+    out += `<circle cx="${lx}" cy="${ly}" r="3" fill="${l.m.color}"
+             stroke="var(--surface-1)" stroke-width="2"/>`;
+    out += `<text class="dlabel" x="${lx + 9}" y="${l.y}">${l.m.name} ${l.v}</text>`;
+  }
+  out += `<line id="cross" class="axis-line" y1="${PAD.t}" y2="${H - PAD.b}" style="display:none"/>`;
+  out += `<rect id="hit" x="${PAD.l}" y="${PAD.t}" width="${W - PAD.l - PAD.r}" height="${H - PAD.t - PAD.b}" fill="transparent"/>`;
+  svg.innerHTML = out;
+
+  const hit = svg.querySelector('#hit'), cross = svg.querySelector('#cross'), tip = $('tip');
+  hit.onmousemove = ev => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    const t = ((px - PAD.l) / (W - PAD.l - PAD.r)) * maxT;
+    let best = history[0];
+    for (const p of history) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+    cross.setAttribute('x1', x(best.t)); cross.setAttribute('x2', x(best.t));
+    cross.style.display = '';
+    tip.style.opacity = 1;
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 190) + 'px';
+    tip.style.top = (ev.clientY - 10) + 'px';
+    tip.innerHTML = `<div class="tt-head">${best.t.toFixed(0)}s elapsed</div>` +
+      MECHS.map(m => `<div class="tt-row">
+        <span class="swatch" style="background:${m.color}"></span>${m.name}
+        <span class="tt-val">${best[m.key]}</span></div>`).join('');
+  };
+  hit.onmouseleave = () => { cross.style.display = 'none'; tip.style.opacity = 0; };
+}
+
+function drawTable() {
+  if ($('tableWrap').hidden) return;
+  const rows = history.filter((_, i) => i % 10 === 0).slice(-14);
+  $('tableWrap').innerHTML = `<table>
+    <thead><tr><th>Elapsed</th>${MECHS.map(m => `<th>${m.name}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(p => `<tr><td>${p.t.toFixed(0)}s</td>${
+      MECHS.map(m => `<td>${p[m.key]}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+
+// ----------------------------------------------------------------------- loop
+
+buildCards();
+shortPolling();
+longPolling();
+startSSE();
+startWS();
+
+setInterval(() => {
+  const p = {t: elapsed()};
+  MECHS.forEach(m => p[m.key] = state[m.key].requests);
+  history.push(p);
+  if (history.length > 2000) history.shift();
+  paint(); drawChart(); drawTable();
+}, 500);
+</script>
+</body>
+</html>

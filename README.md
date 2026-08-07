@@ -11,6 +11,8 @@ Companion to the notes in [`system-design`](https://github.com/harshwardhan6062/
 | Directory | Topic | What it demonstrates |
 | --- | --- | --- |
 | [`websockets-presence`](./websockets-presence) | WebSockets, presence | Server push, the HTTP `Upgrade` handshake, connection state, why heartbeats are needed |
+| [`polling`](./polling) | Short polling, long polling, SSE, WebSocket | All four side by side: request cost, latency, and which ones reconnect on their own |
+| [`connection-pool`](./connection-pool) | Connection pooling (Go) | A blocking-queue pool with `sync.Cond` — capacity limits, context cancellation, reuse |
 
 ## Ground rules
 
