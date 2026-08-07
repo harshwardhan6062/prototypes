@@ -222,6 +222,13 @@
     <label><input type="checkbox" id="auto"> Auto-send every 5s</label>
     <button id="drop">Drop all connections</button>
     <label><input type="checkbox" id="reconnect" checked> WebSocket auto-reconnect</label>
+    <label>long-poll timeout
+      <select id="wait">
+        <option value="5">5s</option>
+        <option value="15" selected>15s</option>
+        <option value="30">30s</option>
+      </select>
+    </label>
     <span class="elapsed" id="elapsed">0s elapsed</span>
   </div>
 
@@ -239,6 +246,16 @@
       <button id="pause">Pause</button>
       <button id="clear">Clear</button>
     </div>
+  </section>
+
+  <section class="panel">
+    <h3>Raw SSE stream</h3>
+    <p class="hint">
+      The literal bytes the server writes. Lines starting <code>:</code> are
+      comments — the server saying <em>“still here, nothing new.”</em>
+      <b>EventSource throws these away</b>, so they never reach your JS.
+    </p>
+    <div class="trace" id="raw" style="height:220px"></div>
   </section>
 
   <section class="panel">
@@ -334,16 +351,22 @@ async function shortPolling() {
 async function longPolling() {
   while (true) {
     const s = state.long;
+    const wait = +$('wait').value;
     try {
-      s.requests++; s.status = 'waiting';
-      wire('↑', 'long', `GET /api/long?since=${s.cursor} — server holds it`);
-      const r = await fetch(`/api/long?since=${s.cursor}`);
+      s.requests++; s.status = 'waiting'; s.heldSince = performance.now(); s.wait = wait;
+      wire('↑', 'long', `GET /api/long?since=${s.cursor}&wait=${wait} — server holds it`);
+      const r = await fetch(`/api/long?since=${s.cursor}&wait=${wait}`);
       const d = await r.json();
-      s.status = 'ok'; s.cursor = d.cursor;
-      if (d.messages.length) { noticed('long'); wire('↓', 'long', `200 — ${d.messages.length} new, connection closes`); }
-      else wire('↓', 'long', '200 — timed out, nothing new');
+      const held = ((performance.now() - s.heldSince) / 1000).toFixed(1);
+      s.status = 'ok'; s.cursor = d.cursor; s.heldSince = null;
+      if (d.messages.length) {
+        noticed('long');
+        wire('↓', 'long', `200 after ${held}s — ${d.messages.length} new, connection closes`);
+      } else {
+        wire('↓', 'long', `200 after ${held}s — "nothing new", ask me again`);
+      }
     } catch {
-      s.status = 'down'; wire('✕', 'long', 'request failed');
+      s.status = 'down'; s.heldSince = null; wire('✕', 'long', 'request failed');
       await new Promise(r => setTimeout(r, 1000));
     }
   }
@@ -371,6 +394,54 @@ function startSSE() {
       }
     }, 50);
   };
+}
+
+// A second tap on the same endpoint, read as bytes instead of via EventSource —
+// the only way to see comment lines and the raw frame format.
+async function rawSSE() {
+  const paint = (text, kind) => {
+    const el = document.createElement('div');
+    el.className = 'row';
+    el.style.gridTemplateColumns = '54px 1fr';
+    const color = kind === 'comment' ? 'var(--text-muted)'
+                : kind === 'meta'    ? 'var(--s-long)'
+                : 'var(--s-sse)';
+    el.innerHTML = `<span class="t">${elapsed().toFixed(1)}s</span>` +
+                   `<span class="detail" style="color:${color}">${text}</span>`;
+    const box = $('raw');
+    const stuck = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+    box.appendChild(el);
+    while (box.childElementCount > 200) box.firstChild.remove();
+    if (stuck) box.scrollTop = box.scrollHeight;
+  };
+
+  while (true) {
+    try {
+      const r = await fetch('/api/sse?raw=1');
+      paint('── stream opened ──', 'meta');
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, {stream: true});
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i);
+          buf = buf.slice(i + 1);
+          if (line === '') continue;
+          const kind = line.startsWith(':') ? 'comment'
+                     : line.startsWith('retry') ? 'meta' : 'data';
+          paint(line.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])), kind);
+        }
+      }
+      paint('── stream closed ──', 'meta');
+    } catch {
+      paint('── stream error ──', 'meta');
+    }
+    await new Promise(r => setTimeout(r, 1500));
+  }
 }
 
 let ws = null, wsDelay = 500;
@@ -494,7 +565,11 @@ function paint() {
     const st = STATUS[s.status];
     const el = $(`s-${m.key}`);
     el.style.color = st.color;
-    el.innerHTML = `<span class="icon">${st.icon}</span>${st.label}`;
+    let label = st.label;
+    if (m.key === 'long' && s.status === 'waiting' && s.heldSince) {
+      label = `holding ${((performance.now() - s.heldSince) / 1000).toFixed(0)}s / ${s.wait}s`;
+    }
+    el.innerHTML = `<span class="icon">${st.icon}</span>${label}`;
   }
 }
 
@@ -591,6 +666,7 @@ shortPolling();
 longPolling();
 startSSE();
 startWS();
+rawSSE();
 
 setInterval(() => {
   const p = {t: elapsed()};

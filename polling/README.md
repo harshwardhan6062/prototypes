@@ -63,6 +63,29 @@ Long polling has **no protocol marker at all**. It's an ordinary GET the server
 chooses to sit on. That's why it traverses every proxy — and why every proxy
 tries to time it out.
 
+## Stream TTL
+
+`STREAM_TTL` (20s here, plus jitter) closes each SSE stream on a timer. That
+sounds destructive; it isn't, because the browser reopens with `Last-Event-ID`
+and nothing is missed. Deliberate recycling buys you:
+
+- **rebalancing** — long-lived connections stick to one server, so a newly added
+  server gets no traffic until something forces a reconnect
+- **auth refresh** — auth happens once at connect; a token that expires mid-stream
+  is otherwise never re-checked
+- **clean deploys** — drain gradually instead of dropping everything at once
+
+Always jitter it. Without jitter every client connected at the same time recycles
+at the same time, and you have built a scheduled reconnect storm.
+
+Server log from one recycle shows the payoff, and the contrast:
+
+```
+[sse] open  Last-Event-ID=None   raw=False   EventSource, first open
+[sse] open  Last-Event-ID='1'    raw=False   EventSource reconnect — bookmark sent automatically
+[sse] open  Last-Event-ID=None   raw=True    hand-written fetch loop — no bookmark, because we never wrote one
+```
+
 ## Notes
 
 - `X-Accel-Buffering: no` on the SSE response. Without it nginx buffers the

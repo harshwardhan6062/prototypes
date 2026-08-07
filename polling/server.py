@@ -9,10 +9,13 @@
 """
 import asyncio
 import json
+import random
 import time
 from aiohttp import web, WSMsgType
 
 LONG_POLL_TIMEOUT = 30
+STREAM_TTL = 20          # recycle SSE streams; short so it is watchable
+STREAM_TTL_JITTER = 8    # never let every client recycle at the same instant
 PORT = 8080
 
 messages = []
@@ -83,7 +86,8 @@ async def long_poll(request):
     global long_waiters
     hits["long"] += 1
     since = int(request.query.get("since", 0))
-    deadline = time.time() + LONG_POLL_TIMEOUT
+    wait = min(int(request.query.get("wait", LONG_POLL_TIMEOUT)), 60)
+    deadline = time.time() + wait
     long_waiters += 1
     try:
         while len(messages) <= since:
@@ -100,8 +104,11 @@ async def long_poll(request):
 # --- SSE: one connection, many messages ---------------------------------------
 
 async def sse(request):
-    hits["sse"] += 1
-    since = int(request.headers.get("Last-Event-ID", request.query.get("since", 0)))
+    if not request.query.get("raw"):        # the raw viewer taps the same stream
+        hits["sse"] += 1                    # without skewing the request count
+    lei = request.headers.get("Last-Event-ID")
+    print(f"[sse] open  Last-Event-ID={lei!r}  raw={bool(request.query.get('raw'))}", flush=True)
+    since = int(lei if lei is not None else request.query.get("since", 0))
 
     resp = web.StreamResponse(headers={
         "Content-Type": "text/event-stream",
@@ -111,13 +118,24 @@ async def sse(request):
     await resp.prepare(request)
     sse_clients.add(resp)
     try:
+        deadline = time.time() + STREAM_TTL + random.uniform(0, STREAM_TTL_JITTER)
         await resp.write(b"retry: 2000\n\n")
         for m in after(since):
             await send_sse(resp, m)
             since = m["id"]
 
         while True:
-            await bus.wait()
+            left = deadline - time.time()
+            if left <= 0:
+                # TTL reached. Closing is safe: the browser reopens with
+                # Last-Event-ID, so nothing is missed.
+                await resp.write(b": ttl reached, closing - reconnect please\n\n")
+                break
+            # comment line every 5s of quiet: "still here, nothing to report".
+            # EventSource discards these — only a raw reader sees them.
+            if not await bus.wait(min(5, left)):
+                await resp.write(b": keep-alive\n\n")
+                continue
             for m in after(since):
                 await send_sse(resp, m)
                 since = m["id"]
@@ -125,6 +143,22 @@ async def sse(request):
         pass
     finally:
         sse_clients.discard(resp)
+    return resp
+
+
+async def llm(request):
+    """Mimic an LLM: stream a few tokens, send a sentinel, then close."""
+    resp = web.StreamResponse(headers={
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+    await resp.prepare(request)
+    for tok in ["SSE", " is", " a", " download", " that", " finishes."]:
+        await resp.write(f'data: {json.dumps({"delta": tok})}\n\n'.encode())
+        await asyncio.sleep(0.25)
+    await resp.write(b"data: [DONE]\n\n")   # layer 1: the sentinel
+    await resp.write_eof()                    # layer 2: the 0-length chunk
     return resp
 
 
@@ -203,6 +237,7 @@ app.add_routes([
     web.get("/api/short", short_poll),
     web.get("/api/long", long_poll),
     web.get("/api/sse", sse),
+    web.get("/api/llm", llm),
     web.get("/api/ws", websocket),
     web.post("/api/send", send),
     web.post("/api/drop", drop),
