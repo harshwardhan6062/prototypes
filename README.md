@@ -14,6 +14,8 @@ Companion to the notes in [`system-design`](https://github.com/harshwardhan6062/
 | [`polling`](./polling) | Short polling, long polling, SSE, WebSocket | All four side by side: request cost, latency, and which ones reconnect on their own |
 | [`connection-pool`](./connection-pool) | Connection pooling (Go) | A blocking-queue pool with `sync.Cond` — capacity limits, context cancellation, reuse |
 
+| [`columnar-vs-widecolumn`](./columnar-vs-widecolumn) | Columnar vs wide-column | Why cheap `ADD COLUMN` is not the wide-column model, and what a `Map` column costs |
+
 ## Ground rules
 
 - **Minimal.** Small enough to read top to bottom in one sitting.
