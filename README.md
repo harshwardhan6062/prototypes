@@ -16,6 +16,8 @@ Companion to the notes in [`system-design`](https://github.com/harshwardhan6062/
 
 | [`columnar-vs-widecolumn`](./columnar-vs-widecolumn) | Columnar vs wide-column | Why cheap `ADD COLUMN` is not the wide-column model, and what a `Map` column costs |
 
+| [`capacity-ceiling`](./capacity-ceiling) | Load, saturation, Little's Law | Where a query's throughput ceiling is, and why databases fail by running out of workers rather than getting slower |
+
 ## Ground rules
 
 - **Minimal.** Small enough to read top to bottom in one sitting.
