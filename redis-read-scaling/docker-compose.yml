@@ -1,0 +1,94 @@
+# Every Redis node is capped at 0.25 CPU on purpose.
+#
+# An uncapped Redis does 100k+ reads/sec and you will break your laptop's load
+# generator long before you break Redis. Capping it makes the ceiling low,
+# reachable, and obvious — and the arithmetic clean: each node adds roughly the
+# same fixed amount of read capacity.
+
+services:
+  redis-primary:
+    image: redis:7.4-alpine
+    container_name: rrs-primary
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+      --maxmemory 256mb
+      --maxmemory-policy noeviction
+    ports:
+      - "6380:6379"
+    cpus: "0.25"
+    networks: [lab]
+
+  # Scale this: docker compose up -d --scale redis-replica=3
+  # No container_name and no host port, or scaling would collide.
+  redis-replica:
+    image: redis:7.4-alpine
+    command: >
+      redis-server
+      --replicaof redis-primary 6379
+      --replica-read-only yes
+      --save ""
+      --appendonly no
+      --maxmemory 256mb
+      --maxmemory-policy noeviction
+    depends_on: [redis-primary]
+    cpus: "0.25"
+    networks: [lab]
+
+  app:
+    build: ./app
+    container_name: rrs-app
+    environment:
+      REDIS_PRIMARY: redis-primary:6379
+      KEY_COUNT: "10000"
+      # Set to "true" to reproduce the classic mistake: replicas exist but every
+      # read still goes to the primary, so scaling them changes nothing.
+      READ_FROM_PRIMARY: "false"
+    ports:
+      - "8090:8080"
+    depends_on: [redis-primary]
+    # Deliberately NOT cpu-capped. The app must not be the bottleneck.
+    networks: [lab]
+
+  # One exporter, multi-target mode. Prometheus passes ?target=redis://host:6379
+  # so a single exporter covers however many replicas exist.
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: rrs-exporter
+    command: ["--redis.addr="]
+    networks: [lab]
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: rrs-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=6h
+      # lets k6 push its own metrics into the same Prometheus
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9091:9090"
+    networks: [lab]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: rrs-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    depends_on: [prometheus]
+    networks: [lab]
+
+networks:
+  lab:
+    driver: bridge

@@ -18,6 +18,8 @@ Companion to the notes in [`system-design`](https://github.com/harshwardhan6062/
 
 | [`capacity-ceiling`](./capacity-ceiling) | Load, saturation, Little's Law | Where a query's throughput ceiling is, and why databases fail by running out of workers rather than getting slower |
 
+| [`redis-read-scaling`](./redis-read-scaling) | Read replicas, saturation | Where one Redis tops out, that replicas do nothing unless the client routes to them, and what async replication costs |
+
 ## Ground rules
 
 - **Minimal.** Small enough to read top to bottom in one sitting.

@@ -1,0 +1,41 @@
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+
+scrape_configs:
+  # The app's own view: did the caller get an answer, and how fast.
+  - job_name: app
+    static_configs:
+      - targets: [app:8080]
+
+  # Redis nodes, discovered by DNS.
+  #
+  # Docker Compose's embedded DNS returns one A record per container behind a
+  # service name, so `redis-replica` resolves to ALL replicas. Scale up and
+  # Prometheus finds the new ones on its next SD refresh, with no config change.
+  #
+  # A single redis_exporter in multi-target mode serves them all: Prometheus
+  # passes the real target as ?target=, via the relabel rules below.
+  - job_name: redis
+    metrics_path: /scrape
+    dns_sd_configs:
+      - names: [redis-primary, redis-replica]
+        type: A
+        port: 6379
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: redis-exporter:9121
+      # role=primary / role=replica, taken from which DNS name matched
+      - source_labels: [__meta_dns_name]
+        regex: redis-primary
+        target_label: role
+        replacement: primary
+      - source_labels: [__meta_dns_name]
+        regex: redis-replica
+        target_label: role
+        replacement: replica
