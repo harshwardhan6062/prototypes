@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quadtree vs Geohash</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --plane: #f9f9f7;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --s-qt: #2a78d6; --s-gh: #eda100; --s-hit: #e87ba4; --s-pt: #008300;
+    --good: #0ca30c; --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --plane: #0d0d0d;
+      --text-primary: #fff; --text-secondary: #c3c2b7; --text-muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --s-qt: #3987e5; --s-gh: #c98500; --s-hit: #d55181; --s-pt: #008300;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --plane: #0d0d0d;
+    --text-primary: #fff; --text-secondary: #c3c2b7; --text-muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --s-qt: #3987e5; --s-gh: #c98500; --s-hit: #d55181; --s-pt: #008300;
+  }
+  * { box-sizing: border-box }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,sans-serif }
+  .viz-root { background:var(--plane); color:var(--text-primary); min-height:100vh; padding:26px 22px 50px }
+  .wrap { max-width:1240px; margin:0 auto }
+  header { display:flex; align-items:flex-start; gap:16px }
+  h1 { font-size:21px; font-weight:650; margin:0; letter-spacing:-.01em }
+  .sub { color:var(--text-secondary); font-size:14px; margin:4px 0 0 }
+  .spacer { flex:1 }
+  button, select {
+    font:inherit; font-size:14px; padding:7px 13px; border-radius:8px;
+    border:1px solid var(--border); background:var(--surface-1);
+    color:var(--text-primary); cursor:pointer;
+  }
+  .controls {
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    margin:20px 0 16px; padding:13px 16px; background:var(--surface-1);
+    border:1px solid var(--border); border-radius:12px;
+  }
+  .controls label { display:inline-flex; align-items:center; gap:7px;
+    font-size:14px; color:var(--text-secondary) }
+  input[type=range] { width:150px; accent-color:var(--s-qt) }
+  .maps { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+  @media (max-width:960px){ .maps{grid-template-columns:1fr} }
+  .panel { background:var(--surface-1); border:1px solid var(--border);
+    border-radius:12px; padding:15px 17px 12px }
+  .panel h2 { font-size:14px; font-weight:650; margin:0 0 2px;
+    display:flex; align-items:center; gap:7px }
+  .swatch { width:10px;height:10px;border-radius:3px;flex:none }
+  .panel .hint { font-size:12.5px; color:var(--text-muted); margin:0 0 8px }
+  svg { display:block; width:100%; height:auto; cursor:crosshair;
+    background:var(--plane); border-radius:8px }
+  .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:14px }
+  @media (max-width:760px){ .cards{grid-template-columns:1fr} }
+  .figure { font-size:29px; font-weight:640; line-height:1.05; letter-spacing:-.02em }
+  .figure-label { font-size:12px; color:var(--text-muted) }
+  .subs { display:flex; gap:16px; margin-top:11px }
+  .sub-val { font-size:14px; font-weight:600; font-variant-numeric:tabular-nums }
+  .sub-lab { font-size:11px; color:var(--text-muted) }
+  .badge { display:inline-flex; align-items:center; gap:5px; font-size:11.5px;
+    font-weight:600; margin-top:11px; padding:2px 8px; border-radius:999px;
+    border:1px solid var(--border) }
+  .note { margin-top:16px; padding:12px 15px; font-size:13.5px;
+    color:var(--text-secondary); background:var(--surface-1);
+    border:1px solid var(--border); border-left:3px solid var(--s-qt);
+    border-radius:0 10px 10px 0 }
+  .note b { color:var(--text-primary) }
+  code { font:12.5px ui-monospace,Menlo,monospace; background:var(--plane);
+    padding:1px 5px; border-radius:4px }
+</style>
+</head>
+<body><div class="viz-root"><div class="wrap">
+
+<header>
+  <div>
+    <h1>Quadtree vs Geohash — same points, same question</h1>
+    <p class="sub">“Which points are within R of here?” Click either map to ask.</p>
+  </div>
+  <div class="spacer"></div>
+  <button id="theme">Dark</button>
+</header>
+
+<div class="controls">
+  <label>radius <input type="range" id="radius" min="200" max="6000" step="100" value="1500">
+    <span id="radiusVal" style="font-variant-numeric:tabular-nums">1500 m</span></label>
+  <label>geohash precision
+    <select id="prec">
+      <option value="4">4</option><option value="5">5</option>
+      <option value="6" selected>6</option><option value="7">7</option>
+      <option value="8">8</option>
+    </select>
+    <span id="cellSize" style="color:var(--text-muted);font-size:12.5px"></span>
+  </label>
+  <label><input type="checkbox" id="showGrid" checked> show cells</label>
+  <span id="treeStats" style="margin-left:auto;font-size:12.5px;color:var(--text-muted)"></span>
+</div>
+
+<div class="maps">
+  <section class="panel">
+    <h2><span class="swatch" style="background:var(--s-qt)"></span>Quadtree</h2>
+    <p class="hint">Boxes split where points are dense. Deeper box = more crowded.</p>
+    <svg id="qtMap" viewBox="0 0 500 500" role="img" aria-label="Quadtree subdivision"></svg>
+  </section>
+  <section class="panel">
+    <h2><span class="swatch" style="background:var(--s-gh)"></span>Geohash</h2>
+    <p class="hint">Fixed grid. Same cell size everywhere, dense or empty.</p>
+    <svg id="ghMap" viewBox="0 0 500 500" role="img" aria-label="Geohash grid"></svg>
+  </section>
+</div>
+
+<div class="cards" id="cards"></div>
+
+<p class="note" id="note">
+  <b>Click a map.</b> Then compare <b>points tested</b> — all three return the same
+  answer, so the only difference is how much work it took.
+  Try clicking a dense area, then an empty one.
+</p>
+
+</div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let DATA = null, GRID = null, LAST = null;
+
+const P = 500, PAD = 6;
+let proj = null;
+
+async function load() {
+  DATA = await (await fetch('/api/data')).json();
+  const b = DATA.bounds;
+  const sx = (P - 2*PAD) / (b.lon_hi - b.lon_lo);
+  const sy = (P - 2*PAD) / (b.lat_hi - b.lat_lo);
+  proj = {
+    x: lon => PAD + (lon - b.lon_lo) * sx,
+    y: lat => P - PAD - (lat - b.lat_lo) * sy,
+    lon: x  => b.lon_lo + (x - PAD) / sx,
+    lat: y  => b.lat_lo + (P - PAD - y) / sy,
+    mPerPx: 111320 / sx,
+  };
+  const s = DATA.tree_stats;
+  $('treeStats').textContent =
+    `${DATA.points.length} points · quadtree: ${s.nodes} nodes, ${s.leaves} leaves, depth ${s.max_depth}`;
+  await loadGrid();
+  draw();
+}
+
+async function loadGrid() {
+  GRID = await (await fetch(`/api/geohash?precision=${$('prec').value}`)).json();
+  $('cellSize').textContent = `≈ ${GRID.cell_h_m} × ${GRID.cell_w_m} m`;
+}
+
+function boxRect(b, stroke, w, fill) {
+  const x = proj.x(b.lon_lo), y = proj.y(b.lat_hi);
+  return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}"
+    width="${(proj.x(b.lon_hi)-x).toFixed(1)}" height="${(proj.y(b.lat_lo)-y).toFixed(1)}"
+    fill="${fill||'none'}" stroke="${stroke}" stroke-width="${w}"/>`;
+}
+
+function draw() {
+  const hitQt = new Set(LAST?.quadtree.ids || []);
+  const hitGh = new Set(LAST?.geohash.ids || []);
+  const ghCells = new Set(LAST?.geohash.cells || []);
+
+  // ---- quadtree map
+  let s = '';
+  for (const b of DATA.quadtree) {
+    const op = 0.13 + Math.min(b.depth, 8) * 0.075;
+    s += boxRect(b, `color-mix(in srgb, var(--s-qt) ${op*100}%, transparent)`, 1);
+  }
+  s += pointsSvg(hitQt);
+  s += queryCircle();
+  $('qtMap').innerHTML = s;
+
+  // ---- geohash map
+  let g = '';
+  if ($('showGrid').checked) {
+    for (const c of GRID.cells) {
+      const scanned = ghCells.has(c.gh);
+      g += boxRect(c,
+        scanned ? 'var(--s-gh)' : 'color-mix(in srgb, var(--s-gh) 22%, transparent)',
+        scanned ? 1.6 : 1,
+        scanned ? 'color-mix(in srgb, var(--s-gh) 13%, transparent)' : null);
+    }
+  }
+  g += pointsSvg(hitGh);
+  g += queryCircle();
+  $('ghMap').innerHTML = g;
+}
+
+function pointsSvg(hits) {
+  let s = '';
+  for (const p of DATA.points) {
+    const hit = hits.has(p.id);
+    s += `<circle cx="${proj.x(p.lon).toFixed(1)}" cy="${proj.y(p.lat).toFixed(1)}"
+       r="${hit?3.1:1.7}" fill="${hit?'var(--s-hit)':'var(--s-pt)'}"
+       ${hit?'stroke="var(--surface-1)" stroke-width="1.2"':'opacity="0.5"'}/>`;
+  }
+  return s;
+}
+
+function queryCircle() {
+  if (!LAST) return '';
+  const r = (+$('radius').value) / proj.mPerPx;
+  return `<circle cx="${proj.x(LAST.lon).toFixed(1)}" cy="${proj.y(LAST.lat).toFixed(1)}"
+      r="${r.toFixed(1)}" fill="none" stroke="var(--text-primary)"
+      stroke-width="1.6" stroke-dasharray="4 3"/>
+    <circle cx="${proj.x(LAST.lon).toFixed(1)}" cy="${proj.y(LAST.lat).toFixed(1)}"
+      r="3.5" fill="var(--text-primary)"/>`;
+}
+
+async function query(lat, lon) {
+  const r = $('radius').value, p = $('prec').value;
+  const res = await (await fetch(
+    `/api/query?lat=${lat}&lon=${lon}&radius_m=${r}&precision=${p}`)).json();
+  LAST = {...res, lat, lon};
+  render(); draw();
+}
+
+function render() {
+  const r = LAST, total = r.total_points;
+  const card = (name, color, m, extra) => {
+    const pct = (m.points_tested / total * 100);
+    const agree = m.found === r.truth;
+    return `<div class="panel">
+      <h2><span class="swatch" style="background:${color}"></span>${name}</h2>
+      <div class="figure">${m.points_tested.toLocaleString()}</div>
+      <div class="figure-label">points tested &nbsp;·&nbsp; ${pct.toFixed(0)}% of all ${total}</div>
+      <div class="subs">
+        <div><div class="sub-val">${m.found}</div><div class="sub-lab">found</div></div>
+        ${extra}
+      </div>
+      <div class="badge" style="color:${agree?'var(--good)':'var(--critical)'}">
+        <span>${agree?'●':'✕'}</span>${agree?'matches truth':'WRONG — '+m.found+' vs '+r.truth}
+      </div>
+    </div>`;
+  };
+
+  $('cards').innerHTML =
+    card('Brute force', 'var(--text-muted)', r.bruteforce, '') +
+    card('Quadtree', 'var(--s-qt)', r.quadtree,
+      `<div><div class="sub-val">${r.quadtree.nodes_visited}</div><div class="sub-lab">nodes visited</div></div>
+       <div><div class="sub-val">${r.quadtree.nodes_pruned}</div><div class="sub-lab">pruned</div></div>`) +
+    card('Geohash', 'var(--s-gh)', r.geohash,
+      `<div><div class="sub-val">${r.geohash.cells_scanned}</div><div class="sub-lab">cells scanned</div></div>
+       <div><div class="sub-val" style="font-family:ui-monospace,monospace;font-size:12.5px">${r.geohash.cell}</div><div class="sub-lab">cell</div></div>`);
+
+  const speedup = (r.bruteforce.points_tested / Math.max(r.quadtree.points_tested,1));
+  const ghSpeed = (r.bruteforce.points_tested / Math.max(r.geohash.points_tested,1));
+  $('note').innerHTML =
+    `<b>All three found ${r.truth} points.</b> Quadtree looked at
+     <b>${speedup.toFixed(1)}×</b> fewer than brute force; geohash
+     <b>${ghSpeed.toFixed(1)}×</b> fewer.
+     ${r.geohash.found !== r.truth
+       ? ` ⚠️ <b>Geohash missed some</b> — the radius is bigger than the cell,
+           so 9 cells aren't enough. Lower the precision.`
+       : ''}`;
+}
+
+for (const map of ['qtMap','ghMap']) {
+  $(map).addEventListener('click', e => {
+    const svg = $(map), box = svg.getBoundingClientRect();
+    const x = (e.clientX - box.left) / box.width * P;
+    const y = (e.clientY - box.top) / box.height * P;
+    query(proj.lat(y).toFixed(6), proj.lon(x).toFixed(6));
+  });
+}
+$('radius').oninput = e => {
+  $('radiusVal').textContent = e.target.value + ' m';
+  if (LAST) query(LAST.lat, LAST.lon);
+};
+$('prec').onchange = async () => { await loadGrid(); if (LAST) query(LAST.lat, LAST.lon); else draw(); };
+$('showGrid').onchange = draw;
+$('theme').onclick = () => {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  document.documentElement.setAttribute('data-theme', dark ? 'light' : 'dark');
+  $('theme').textContent = dark ? 'Dark' : 'Light';
+};
+
+load();
+</script>
+</body></html>

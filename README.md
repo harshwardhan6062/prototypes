@@ -20,6 +20,8 @@ Companion to the notes in [`system-design`](https://github.com/harshwardhan6062/
 
 | [`redis-read-scaling`](./redis-read-scaling) | Read replicas, saturation | Where one Redis tops out, that replicas do nothing unless the client routes to them, and what async replication costs |
 
+| [`geo-index`](./geo-index) | Quadtree, geohash | Both answering one radius query over the same points, with the work each does made visible — and geohash's silent wrong answers |
+
 ## Ground rules
 
 - **Minimal.** Small enough to read top to bottom in one sitting.
