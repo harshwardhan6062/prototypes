@@ -22,6 +22,8 @@ Companion to the notes in [`system-design`](https://github.com/harshwardhan6062/
 
 | [`geo-index`](./geo-index) | Quadtree, geohash | Both answering one radius query over the same points, with the work each does made visible — and geohash's silent wrong answers |
 
+| [`prometheus-basics`](./prometheus-basics) | Prometheus, metrics | A `/metrics` endpoint hand-written with no client library — counters vs gauges vs histograms, and why cumulative buckets |
+
 ## Ground rules
 
 - **Minimal.** Small enough to read top to bottom in one sitting.
