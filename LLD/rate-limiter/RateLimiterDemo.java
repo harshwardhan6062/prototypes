@@ -97,6 +97,24 @@ final class InMemoryStore<S extends KeyState> implements Store<S> {
     }
 }
 
+/**
+ * Chooses the BACKEND. The strategy owns its state type — only TokenBucket knows
+ * what a TokenBucketState is — but the caller owns where that state is kept.
+ *
+ * Injecting the Store directly can't work: the caller would have to name the
+ * strategy's internal state class. So inject the factory instead, and the
+ * strategy hands it the one thing only it knows.
+ */
+interface StoreFactory {
+    <S extends KeyState> Store<S> create(Supplier<S> stateFactory);
+}
+
+final class InMemoryStoreFactory implements StoreFactory {
+    public <S extends KeyState> Store<S> create(Supplier<S> stateFactory) {
+        return new InMemoryStore<>(stateFactory);
+    }
+}
+
 /** Shared plumbing: a clock, a store, and the eviction sweep every strategy needs. */
 abstract class KeyedLimiter<S extends KeyState> implements RateLimiter {
     protected final Clock clock;
@@ -121,7 +139,11 @@ final class TokenBucket extends KeyedLimiter<TokenBucketState> {
     private final double refillPerMillis;
 
     TokenBucket(long capacity, double refillPerSecond, Clock clock) {
-        super(clock, new InMemoryStore<>(TokenBucketState::new));
+        this(capacity, refillPerSecond, clock, new InMemoryStoreFactory());
+    }
+
+    TokenBucket(long capacity, double refillPerSecond, Clock clock, StoreFactory stores) {
+        super(clock, stores.create(TokenBucketState::new));
         this.capacity = capacity;
         this.refillPerMillis = refillPerSecond / 1000.0;
     }
@@ -158,7 +180,11 @@ final class FixedWindow extends KeyedLimiter<FixedWindowState> {
     private final long limit, windowMillis;
 
     FixedWindow(long limit, long windowMillis, Clock clock) {
-        super(clock, new InMemoryStore<>(FixedWindowState::new));
+        this(limit, windowMillis, clock, new InMemoryStoreFactory());
+    }
+
+    FixedWindow(long limit, long windowMillis, Clock clock, StoreFactory stores) {
+        super(clock, stores.create(FixedWindowState::new));
         this.limit = limit; this.windowMillis = windowMillis;
     }
 
@@ -190,7 +216,11 @@ final class SlidingWindowLog extends KeyedLimiter<SlidingLogState> {
     private final long limit, windowMillis;
 
     SlidingWindowLog(long limit, long windowMillis, Clock clock) {
-        super(clock, new InMemoryStore<>(SlidingLogState::new));
+        this(limit, windowMillis, clock, new InMemoryStoreFactory());
+    }
+
+    SlidingWindowLog(long limit, long windowMillis, Clock clock, StoreFactory stores) {
+        super(clock, stores.create(SlidingLogState::new));
         this.limit = limit; this.windowMillis = windowMillis;
     }
 
@@ -220,7 +250,11 @@ final class SlidingWindowCounter extends KeyedLimiter<SlidingCounterState> {
     private final long limit, windowMillis;
 
     SlidingWindowCounter(long limit, long windowMillis, Clock clock) {
-        super(clock, new InMemoryStore<>(SlidingCounterState::new));
+        this(limit, windowMillis, clock, new InMemoryStoreFactory());
+    }
+
+    SlidingWindowCounter(long limit, long windowMillis, Clock clock, StoreFactory stores) {
+        super(clock, stores.create(SlidingCounterState::new));
         this.limit = limit; this.windowMillis = windowMillis;
     }
 
@@ -271,6 +305,41 @@ final class UnsafeFixedWindow implements RateLimiter {
             return Decision.allow(limit - cell[0]);
         }
         return Decision.deny(0);
+    }
+}
+
+// ═════════════ A CALLER-SUPPLIED BACKEND (proves the seam) ══════
+
+/**
+ * Stands in for the Redis store. It decorates any other store and counts the
+ * atomic sections — enough to show that the backend really is the caller's
+ * choice, without needing a Redis to run the demo.
+ *
+ * A real RedisStore implements the same one method; the difference is that its
+ * compute() is a Lua script, because the read-modify-write still has to be
+ * atomic once it happens across a network.
+ */
+final class CountingStore<S extends KeyState> implements Store<S> {
+    private final Store<S> delegate;
+    final java.util.concurrent.atomic.AtomicInteger computes = new java.util.concurrent.atomic.AtomicInteger();
+
+    CountingStore(Store<S> delegate) { this.delegate = delegate; }
+
+    public Decision compute(String key, long nowMillis, Function<S, Decision> mutator) {
+        computes.incrementAndGet();
+        return delegate.compute(key, nowMillis, mutator);
+    }
+    public int size() { return delegate.size(); }
+    public int evictIdleBefore(long cutoffMillis) { return delegate.evictIdleBefore(cutoffMillis); }
+}
+
+final class CountingStoreFactory implements StoreFactory {
+    CountingStore<?> created;
+
+    public <S extends KeyState> Store<S> create(Supplier<S> stateFactory) {
+        CountingStore<S> store = new CountingStore<>(new InMemoryStore<>(stateFactory));
+        created = store;
+        return store;
     }
 }
 
@@ -353,6 +422,15 @@ public class RateLimiterDemo {
         ev.advance(60_000);
         many.tryAcquire("user-still-active");
         System.out.println("  evicted idle > 30s:          " + many.evictIdleFor(30_000) + " removed, " + many.trackedKeys() + " left");
+
+        // ---- 7. the backend is the caller's choice ----------------------
+        section("7. PLUGGABLE STORE — the caller picks the backend");
+        var factory = new CountingStoreFactory();
+        var onCustomStore = new TokenBucket(3, 1, new FakeClock(), factory);   // <- injected
+        for (int i = 0; i < 5; i++) onCustomStore.tryAcquire("eve");
+        System.out.println("  same TokenBucket, caller-supplied store: "
+                + factory.created.computes.get() + " atomic sections recorded");
+        System.out.println("  swap this for a RedisStore and nothing above it changes");
     }
 
     /** 200 threads released at once against a single key. */

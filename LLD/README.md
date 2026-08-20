@@ -83,11 +83,13 @@ take the last slot — the same probe as two people buying one seat in the same
 millisecond. Lock per key, never `synchronized` on the limiter, or one hot caller
 stalls everybody.
 
-**Rule and storage are separate interfaces.** `RateLimiter` decides the rule,
-`Store` decides where the counters live. That split is what makes *"now make it
-work across 10 servers"* a new Redis `Store` instead of a rewrite — and the Redis
-version is a Lua script, because atomicity doesn't stop mattering when the map
-moves across the network.
+**Rule and storage are separate interfaces, and the backend is injected.**
+`RateLimiter` decides the rule, `Store` decides where the counters live. That
+split is what makes *"now make it work across 10 servers"* a new Redis `Store`
+instead of a rewrite — and the Redis version is a Lua script, because atomicity
+doesn't stop mattering when the map moves across the network. Declaring `Store`
+and then hardcoding the in-memory one inside each constructor is the easy mistake:
+the seam exists on paper and is welded shut in practice.
 
 **Then fail-open vs fail-closed.** Once the store is remote, the limiter can fail.
 Open protects availability, closed protects the backend; make it configurable.

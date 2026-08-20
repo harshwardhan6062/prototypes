@@ -127,7 +127,28 @@ interface Store<S extends KeyState> {
 }
 ```
 
-With that split, distributed mode is a new `Store`, not a rewrite of four
+**The backend has to be the caller's choice, or the interface is decoration.**
+An earlier version of this file declared `Store` and then hardcoded
+`new InMemoryStore<>(...)` inside every strategy constructor — the seam existed
+on paper and was welded shut in practice. Injecting it is the whole point:
+
+```java
+new TokenBucket(100, 10, clock);                    // defaults to in-memory
+new TokenBucket(100, 10, clock, redisStores);       // same strategy, shared state
+```
+
+One wrinkle worth knowing, because it is why the naive version fails: you cannot
+inject a `Store<TokenBucketState>` directly, since the caller would have to name a
+state class that belongs to the strategy's internals. Inject the **factory**
+instead, and the strategy supplies the one piece only it knows:
+
+```java
+interface StoreFactory {
+    <S extends KeyState> Store<S> create(Supplier<S> stateFactory);
+}
+```
+
+With that, distributed mode is a new `StoreFactory`, not a rewrite of four
 strategies. **This is the thing being tested** — same shape as *"now handle
 events as well as movies."*
 
@@ -236,4 +257,8 @@ Nothing above `Store` knows whether state is local or in Redis; nothing below
 ── 6. EVICTION — bounded memory ──────────────────────────────
   after 1000 distinct callers: 1000 keys held
   evicted idle > 30s:          1000 removed, 1 left
+
+── 7. PLUGGABLE STORE — the caller picks the backend ─────────
+  same TokenBucket, caller-supplied store: 5 atomic sections recorded
+  swap this for a RedisStore and nothing above it changes
 ```

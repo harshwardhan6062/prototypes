@@ -47,62 +47,135 @@ final class Expense {
     }
 }
 
-// ═══════════════════════ SPLIT STRATEGIES ════════════════════
+// ═══════════════════════ HOW TO SPLIT ════════════════════════
+//
+// Every split type is the SAME operation: hand out `total` in proportion to
+// some weights. Only the weights differ. So the contract is one method that
+// returns weights, and rounding is solved once, centrally.
+//
+//   Equally    weights all 1
+//   ByPercent  weights are the percentages
+//   ByAmount   weights are the amounts themselves
+//   ByShares   weights are the share counts
+//
+sealed interface SplitRequest
+        permits SplitRequest.Equally, SplitRequest.ByAmount,
+                SplitRequest.ByPercent, SplitRequest.ByShares {
 
-enum SplitType { EQUAL, EXACT, PERCENT }
+    /** Relative weights per participant. Absolute scale is irrelevant. */
+    Map<User, Long> weights(long total);
 
-interface SplitStrategy {
-    List<Split> calculate(long amount, List<User> participants, List<Double> values);
-}
+    /** Participants in a stable order, so rounding is reproducible. */
+    List<User> participants();
 
-class EqualSplit implements SplitStrategy {
-    public List<Split> calculate(long amount, List<User> users, List<Double> ignored) {
-        long base = amount / users.size(), rem = amount % users.size();
-        List<Split> out = new ArrayList<>();
-        for (int i = 0; i < users.size(); i++)
-            out.add(new Split(users.get(i), base + (i < rem ? 1 : 0)));   // spread the remainder
-        return out;
+    /** Map.of() does NOT preserve order — build ordered maps with this. */
+    @SafeVarargs
+    static <V> LinkedHashMap<User, V> of(Map.Entry<User, V>... entries) {
+        var m = new LinkedHashMap<User, V>();
+        for (var e : entries) m.put(e.getKey(), e.getValue());
+        return m;
     }
-}
 
-class ExactSplit implements SplitStrategy {
-    public List<Split> calculate(long amount, List<User> users, List<Double> values) {
-        if (values == null || values.size() != users.size())
-            throw new IllegalArgumentException("need one exact amount per participant");
-        List<Split> out = new ArrayList<>();
-        for (int i = 0; i < users.size(); i++)
-            out.add(new Split(users.get(i), Math.round(values.get(i) * 100)));
-        return out;                       // Expense's constructor enforces the sum
-    }
-}
-
-class PercentSplit implements SplitStrategy {
-    public List<Split> calculate(long amount, List<User> users, List<Double> pct) {
-        if (pct == null || pct.size() != users.size())
-            throw new IllegalArgumentException("need one percentage per participant");
-        double total = pct.stream().mapToDouble(Double::doubleValue).sum();
-        if (Math.abs(total - 100.0) > 1e-9)
-            throw new IllegalArgumentException("percentages sum to " + total + ", must be 100");
-
-        List<Split> out = new ArrayList<>();
-        long assigned = 0;
-        for (int i = 0; i < users.size() - 1; i++) {
-            long share = Math.round(amount * pct.get(i) / 100.0);
-            assigned += share;
-            out.add(new Split(users.get(i), share));
+    record Equally(List<User> users) implements SplitRequest {
+        public Equally {
+            if (users == null || users.isEmpty())
+                throw new IllegalArgumentException("need at least one participant");
+            users = List.copyOf(users);
         }
-        out.add(new Split(users.getLast(), amount - assigned));  // last absorbs rounding
-        return out;
+        public List<User> participants() { return users; }
+        public Map<User, Long> weights(long total) {
+            return users.stream().collect(Collectors.toMap(
+                    u -> u, u -> 1L, (a, b) -> a, LinkedHashMap::new));
+        }
+    }
+
+    record ByAmount(LinkedHashMap<User, Long> paise) implements SplitRequest {
+        public ByAmount {
+            if (paise == null || paise.isEmpty())
+                throw new IllegalArgumentException("need at least one participant");
+            if (paise.values().stream().anyMatch(v -> v < 0))
+                throw new IllegalArgumentException("amounts cannot be negative");
+            paise = new LinkedHashMap<>(paise);
+        }
+        public List<User> participants() { return List.copyOf(paise.keySet()); }
+        public Map<User, Long> weights(long total) {
+            long sum = paise.values().stream().mapToLong(Long::longValue).sum();
+            if (sum != total)                        // needs the total, so validated here
+                throw new IllegalArgumentException(
+                    "exact amounts sum to " + Money.of(sum) + ", expected " + Money.of(total));
+            return paise;
+        }
+    }
+
+    record ByPercent(LinkedHashMap<User, Double> pct) implements SplitRequest {
+        public ByPercent {
+            if (pct == null || pct.isEmpty())
+                throw new IllegalArgumentException("need at least one participant");
+            double sum = pct.values().stream().mapToDouble(Double::doubleValue).sum();
+            if (Math.abs(sum - 100.0) > 1e-9)        // validated in the CONSTRUCTOR:
+                throw new IllegalArgumentException(  // an invalid request cannot exist
+                    "percentages sum to " + sum + ", must be 100");
+            pct = new LinkedHashMap<>(pct);
+        }
+        public List<User> participants() { return List.copyOf(pct.keySet()); }
+        public Map<User, Long> weights(long total) {
+            var out = new LinkedHashMap<User, Long>();
+            pct.forEach((u, p) -> out.put(u, Math.round(p * 1_000_000)));   // stay integral
+            return out;
+        }
+    }
+
+    /** Added after the other three. Nothing existing had to change. */
+    record ByShares(LinkedHashMap<User, Integer> shares) implements SplitRequest {
+        public ByShares {
+            if (shares == null || shares.isEmpty())
+                throw new IllegalArgumentException("need at least one participant");
+            if (shares.values().stream().anyMatch(s -> s <= 0))
+                throw new IllegalArgumentException("shares must be positive");
+            shares = new LinkedHashMap<>(shares);
+        }
+        public List<User> participants() { return List.copyOf(shares.keySet()); }
+        public Map<User, Long> weights(long total) {
+            var out = new LinkedHashMap<User, Long>();
+            shares.forEach((u, s) -> out.put(u, (long) s));
+            return out;
+        }
     }
 }
 
-class SplitStrategyFactory {
-    private static final Map<SplitType, SplitStrategy> REGISTRY = Map.of(
-        SplitType.EQUAL,   new EqualSplit(),
-        SplitType.EXACT,   new ExactSplit(),
-        SplitType.PERCENT, new PercentSplit());
+/**
+ * Rounding lives here and nowhere else. Largest-remainder: everyone gets the
+ * floor of their share, then leftover paise go to whoever was rounded down
+ * hardest. Deterministic, and the parts always sum back to the whole.
+ */
+final class Distributor {
+    static List<Split> distribute(long total, SplitRequest req) {
+        Map<User, Long> w = req.weights(total);
+        long W = w.values().stream().mapToLong(Long::longValue).sum();
+        if (W <= 0) throw new IllegalArgumentException("weights must sum to something positive");
 
-    static SplitStrategy get(SplitType t) { return REGISTRY.get(t); }
+        record Part(User user, long base, long remainder) {}
+        List<Part> parts = new ArrayList<>();
+        long assigned = 0;
+
+        for (User u : req.participants()) {
+            long num = total * w.get(u);
+            parts.add(new Part(u, num / W, num % W));
+            assigned += num / W;
+        }
+
+        long leftover = total - assigned;            // 0 <= leftover < participants
+        Set<User> getsExtra = parts.stream()
+                .sorted(Comparator.comparingLong(Part::remainder).reversed()
+                        .thenComparing(p -> p.user().id()))     // deterministic tie-break
+                .limit(leftover)
+                .map(Part::user)
+                .collect(Collectors.toSet());
+
+        return parts.stream()
+                .map(p -> new Split(p.user(), p.base() + (getsExtra.contains(p.user()) ? 1 : 0)))
+                .toList();
+    }
 }
 
 // ═══════════════════════ BALANCE SHEET ═══════════════════════
@@ -120,7 +193,7 @@ class BalanceSheet {
 
     synchronized void record(User debtor, User creditor, long amount) {
         if (debtor.equals(creditor) || amount == 0) return;
-        long opposite = get(creditor, debtor);
+        long opposite = get(creditor, debtor);        // do they already owe us?
         if (opposite >= amount) set(creditor, debtor, opposite - amount);
         else { set(creditor, debtor, 0); set(debtor, creditor, get(debtor, creditor) + amount - opposite); }
     }
@@ -142,9 +215,9 @@ class BalanceSheet {
         return net;
     }
 
-    /** Greedy min-cash-flow. At most n-1 transfers; exact minimum is NP-hard. */
+    /** Greedy min-cash-flow. At most n-1 transfers; the exact minimum is NP-hard. */
     synchronized List<String> simplify() {
-        var debtors  = new PriorityQueue<Map.Entry<User, Long>>(Comparator.comparingLong(Map.Entry::getValue));
+        var debtors   = new PriorityQueue<Map.Entry<User, Long>>(Comparator.comparingLong(Map.Entry::getValue));
         var creditors = new PriorityQueue<Map.Entry<User, Long>>(
                 Comparator.comparingLong((Map.Entry<User, Long> e) -> e.getValue()).reversed());
 
@@ -182,24 +255,21 @@ class BalanceSheet {
 class SplitwiseService {
     private final Map<String, User> users = new LinkedHashMap<>();
     private final Map<String, Group> groups = new LinkedHashMap<>();
-    private final List<Expense> log = new ArrayList<>();          // append-only history
-    private final BalanceSheet sheet = new BalanceSheet();        // derived state
+    private final List<Expense> log = new ArrayList<>();       // append-only history
+    private final BalanceSheet sheet = new BalanceSheet();     // derived state
     private int seq = 0;
 
-    User addUser(String id, String name) {
-        User u = new User(id, name); users.put(id, u); return u;
-    }
+    User addUser(String id, String name) { var u = new User(id, name); users.put(id, u); return u; }
 
     Group createGroup(String id, String name, List<User> members) {
-        Group g = new Group(id, name, members); groups.put(id, g); return g;
+        var g = new Group(id, name, members); groups.put(id, g); return g;
     }
 
-    Expense addExpense(String desc, long amount, User paidBy, List<User> participants,
-                       SplitType type, List<Double> values, Group group) {
-        List<Split> splits = SplitStrategyFactory.get(type).calculate(amount, participants, values);
-        Expense e = new Expense("e" + (++seq), desc, amount, paidBy, splits, group);
-        log.add(e);
-        applyDeltas(e, +1);
+    Expense addExpense(String desc, long amount, User paidBy, SplitRequest how, Group group) {
+        List<Split> splits = Distributor.distribute(amount, how);                     // 1. compute splits
+        Expense e = new Expense("e" + (++seq), desc, amount, paidBy, splits, group);  // 2. build + validate
+        log.add(e);                                                                   // 3. append, then frozen
+        applyDeltas(e, +1);                                                           // 4. update derived state
         return e;
     }
 
@@ -207,7 +277,7 @@ class SplitwiseService {
 
     private void applyDeltas(Expense e, int sign) {
         for (Split s : e.splits) {
-            if (s.user().equals(e.paidBy)) continue;              // payer owes themselves nothing
+            if (s.user().equals(e.paidBy)) continue;             // payer owes themselves nothing
             if (sign > 0) sheet.record(s.user(), e.paidBy, s.amount());
             else          sheet.record(e.paidBy, s.user(), s.amount());
         }
@@ -230,7 +300,6 @@ public class Splitwise {
     public static void main(String[] args) {
         SplitwiseService svc = new SplitwiseService();
 
-        // ---- 1. users and a group
         header("1. setup");
         User alice = svc.addUser("u1", "Alice");
         User bob   = svc.addUser("u2", "Bob");
@@ -238,29 +307,33 @@ public class Splitwise {
         Group trip = svc.createGroup("g1", "Goa Trip", List.of(alice, bob, carol));
         System.out.println("  group '" + trip.name + "' with " + trip.members);
 
-        // ---- 2. EQUAL: Alice pays ₹300 dinner, split 3 ways
-        header("2. EQUAL split — Alice pays ₹300 dinner");
-        var dinner = svc.addExpense("Dinner", 30000, alice, List.of(alice, bob, carol),
-                                    SplitType.EQUAL, null, trip);
+        header("2. Equally — Alice pays ₹300 dinner");
+        var dinner = svc.addExpense("Dinner", 30000, alice,
+                new SplitRequest.Equally(List.of(alice, bob, carol)), trip);
         System.out.println("  splits: " + dinner.splits);
         svc.printSheet();
 
-        // ---- 3. EXACT: Bob pays ₹500, but Carol only ate ₹100 of it
-        header("3. EXACT split — Bob pays ₹500, uneven shares");
-        var lunch = svc.addExpense("Lunch", 50000, bob, List.of(alice, bob, carol),
-                                   SplitType.EXACT, List.of(150.0, 250.0, 100.0), trip);
+        header("3. ByAmount — Bob pays ₹500, uneven shares");
+        var lunch = svc.addExpense("Lunch", 50000, bob,
+                new SplitRequest.ByAmount(SplitRequest.of(
+                        Map.entry(alice, 15000L), Map.entry(bob, 25000L), Map.entry(carol, 10000L))), trip);
         System.out.println("  splits: " + lunch.splits);
         svc.printSheet();
 
-        // ---- 4. PERCENT: Carol pays ₹100 taxi, 50/25/25
-        header("4. PERCENT split — Carol pays ₹100 taxi (50/25/25)");
-        var taxi = svc.addExpense("Taxi", 10000, carol, List.of(alice, bob, carol),
-                                  SplitType.PERCENT, List.of(50.0, 25.0, 25.0), trip);
+        header("4. ByPercent — Carol pays ₹100 taxi (50/25/25)");
+        var taxi = svc.addExpense("Taxi", 10000, carol,
+                new SplitRequest.ByPercent(SplitRequest.of(
+                        Map.entry(alice, 50.0), Map.entry(bob, 25.0), Map.entry(carol, 25.0))), trip);
         System.out.println("  splits: " + taxi.splits);
         svc.printSheet();
 
-        // ---- 5. per-user view
-        header("5. balances from each person's view");
+        header("5. ByShares — Alice pays ₹90, Bob counts double");
+        var snacks = svc.addExpense("Snacks", 9000, alice,
+                new SplitRequest.ByShares(SplitRequest.of(
+                        Map.entry(alice, 1), Map.entry(bob, 2), Map.entry(carol, 1))), trip);
+        System.out.println("  splits: " + snacks.splits);
+
+        header("6. balances from each person's view");
         for (User u : List.of(alice, bob, carol)) {
             System.out.println("  " + u + ":");
             var bal = svc.balancesFor(u);
@@ -270,36 +343,39 @@ public class Splitwise {
                          : "they owe " + other + " " + Money.of(-amt))));
         }
 
-        // ---- 6. settle up
-        header("6. settle up — Carol pays Alice ₹50");
+        header("7. settle up — Carol pays Alice ₹50");
         svc.settleUp(carol, alice, 5000);
         svc.printSheet();
 
-        // ---- 7. simplify
-        header("7. simplify debts (greedy min cash flow)");
+        header("8. simplify debts (greedy min cash flow)");
         svc.simplify().forEach(System.out::println);
 
-        // ---- 8. delete reverses the deltas
-        header("8. delete the taxi expense");
+        header("9. delete the taxi expense — reverse the deltas");
         svc.deleteExpense(taxi);
         svc.printSheet();
         System.out.println("  expenses in log: " + svc.history().size());
 
-        // ---- 9. validation
-        header("9. invalid expense is rejected at construction");
-        try {
-            svc.addExpense("Bad", 10000, alice, List.of(alice, bob),
-                           SplitType.EXACT, List.of(30.0, 30.0), trip);   // sums to ₹60, not ₹100
-        } catch (IllegalArgumentException ex) {
-            System.out.println("  rejected: " + ex.getMessage());
+        header("10. rounding always reconciles");
+        for (long amt : new long[]{10000, 10, 100, 1}) {
+            var splits = Distributor.distribute(amt, new SplitRequest.Equally(List.of(alice, bob, carol)));
+            long sum = splits.stream().mapToLong(Split::amount).sum();
+            System.out.printf("  %-8s / 3 = %-44s sums to %-8s %s%n",
+                    Money.of(amt), splits, Money.of(sum), sum == amt ? "✓" : "✗");
         }
+
+        header("11. invalid requests can't be constructed");
         try {
-            svc.addExpense("Bad%", 10000, alice, List.of(alice, bob),
-                           SplitType.PERCENT, List.of(50.0, 30.0), trip);
-        } catch (IllegalArgumentException ex) {
-            System.out.println("  rejected: " + ex.getMessage());
-        }
-        System.out.println("  balance sheet is untouched by the failures:");
+            new SplitRequest.ByPercent(SplitRequest.of(Map.entry(alice, 50.0), Map.entry(bob, 30.0)));
+        } catch (IllegalArgumentException e) { System.out.println("  rejected: " + e.getMessage()); }
+        try {
+            new SplitRequest.ByShares(SplitRequest.of(Map.entry(alice, 0), Map.entry(bob, 1)));
+        } catch (IllegalArgumentException e) { System.out.println("  rejected: " + e.getMessage()); }
+        try {
+            svc.addExpense("Bad", 10000, alice, new SplitRequest.ByAmount(
+                    SplitRequest.of(Map.entry(alice, 6000L), Map.entry(bob, 3000L))), trip);
+        } catch (IllegalArgumentException e) { System.out.println("  rejected: " + e.getMessage()); }
+
+        System.out.println("  balance sheet untouched by the failures:");
         svc.printSheet();
     }
 }
