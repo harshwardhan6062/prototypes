@@ -24,6 +24,8 @@ Companion to the notes in [`system-design`](https://github.com/harshwardhan6062/
 
 | [`prometheus-basics`](./prometheus-basics) | Prometheus, metrics | A `/metrics` endpoint hand-written with no client library — counters vs gauges vs histograms, and why cumulative buckets |
 
+| [`lld`](./lld) | Low-level design (Java) | Runnable interview answers — Splitwise, Abstract Factory |
+
 ## Ground rules
 
 - **Minimal.** Small enough to read top to bottom in one sitting.

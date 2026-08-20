@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  # Prometheus scrapes the COLLECTOR, not the apps. The apps pushed their metrics
+  # to the Collector over OTLP; the Collector re-exposes them in Prometheus format.
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["collector:8889"]

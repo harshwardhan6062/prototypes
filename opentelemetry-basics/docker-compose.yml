@@ -1,0 +1,65 @@
+services:
+  gateway:
+    build: ./app
+    container_name: otel-gateway
+    environment:
+      ROLE: gateway
+      INVENTORY_URL: http://inventory:5000
+      # These three env vars are the ENTIRE backend configuration. The app code
+      # never mentions Jaeger, Prometheus, or the Collector.
+      OTEL_SERVICE_NAME: gateway
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4317
+      OTEL_METRIC_EXPORT_INTERVAL: "5000"
+    ports:
+      - "5001:5000"
+    depends_on: [collector, inventory]
+
+  inventory:
+    build: ./app
+    container_name: otel-inventory
+    environment:
+      ROLE: inventory
+      OTEL_SERVICE_NAME: inventory
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4317
+      OTEL_METRIC_EXPORT_INTERVAL: "5000"
+    ports:
+      - "5002:5000"
+    depends_on: [collector]
+
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.109.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC — where apps push
+      - "8889:8889"   # /metrics — where Prometheus pulls
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: otel-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # the UI you actually want
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: otel-prometheus
+    command: [--config.file=/etc/prometheus/prometheus.yml]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9096:9090"
+    depends_on: [collector]
+
+  # Generates traffic so there is something to look at.
+  load:
+    image: alpine:3.20
+    container_name: otel-load
+    depends_on: [gateway]
+    command:
+      - sh
+      - -c
+      - "apk add --no-cache curl >/dev/null && while true; do curl -s -o /dev/null http://gateway:5000/order; sleep 0.4; done"

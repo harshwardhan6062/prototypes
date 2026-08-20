@@ -1,0 +1,46 @@
+# The Collector is the piece that makes OpenTelemetry vendor-neutral.
+#
+# Apps speak ONE protocol (OTLP) to ONE address. This file decides where the data
+# actually ends up. Swapping Jaeger for Datadog is an edit here, not a redeploy of
+# your services.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Buffer and send in batches instead of one request per span.
+  batch:
+    timeout: 1s
+
+exporters:
+  # Traces → Jaeger (which speaks OTLP natively now)
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Metrics → exposed as a Prometheus /metrics endpoint for Prometheus to SCRAPE.
+  # Note the direction flip: the app PUSHED to the Collector, and Prometheus
+  # PULLS from it. The Collector is the adapter between the two models.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+  # Everything also printed to the Collector's logs, so you can see raw OTLP.
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus, debug]
