@@ -18,10 +18,9 @@ java patterns/AbstractFactoryDemo.java
 | | |
 | --- | --- |
 | [`splitwise/DESIGN.md`](./splitwise/DESIGN.md) | The interview answer, in delivery order |
-| [`splitwise/Splitwise.java`](./splitwise/Splitwise.java) | Complete — 3 split types, balances, settle, simplify, validation |
+| [`splitwise/Splitwise.java`](./splitwise/Splitwise.java) | Complete — 4 split types, balances, settle, simplify, validation |
 | [`splitwise/SplitwiseFlow.java`](./splitwise/SplitwiseFlow.java) | Same design, traced, to see the object lifecycle |
-| [`splitwise/SPLIT-CONTRACT.md`](./splitwise/SPLIT-CONTRACT.md) | Critique of the first split interface, and a better one |
-| [`splitwise/SplitV2.java`](./splitwise/SplitV2.java) | The improved contract, runnable |
+| [`splitwise/SPLIT-CONTRACT.md`](./splitwise/SPLIT-CONTRACT.md) | The split interface that was rejected, and why |
 | [`rate-limiter/DESIGN.md`](./rate-limiter/DESIGN.md) | The interview answer, in delivery order |
 | [`rate-limiter/RateLimiterDemo.java`](./rate-limiter/RateLimiterDemo.java) | Complete — 4 strategies, atomic store, eviction, and two failures reproduced |
 | [`patterns/builder.md`](./patterns/builder.md) | Why the entity can't be its own builder |

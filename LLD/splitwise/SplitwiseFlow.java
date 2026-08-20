@@ -34,17 +34,44 @@ final class Expense {
     }
 }
 
-interface SplitStrategy {
-    List<Split> calculate(long amount, List<User> participants, List<Double> values);
+// Every split type is the same operation: hand out `total` in proportion to
+// weights. The request supplies weights; rounding is solved once, below.
+interface SplitRequest {
+    Map<User, Long> weights(long total);
+    List<User> participants();
 }
 
-class EqualSplit implements SplitStrategy {
-    public List<Split> calculate(long amount, List<User> users, List<Double> ignored) {
-        long base = amount / users.size(), rem = amount % users.size();
-        List<Split> out = new ArrayList<>();
-        for (int i = 0; i < users.size(); i++)
-            out.add(new Split(users.get(i), base + (i < rem ? 1 : 0)));   // spread the remainder
-        return out;
+record Equally(List<User> users) implements SplitRequest {
+    public List<User> participants() { return users; }
+    public Map<User, Long> weights(long total) {
+        var m = new LinkedHashMap<User, Long>();
+        users.forEach(u -> m.put(u, 1L));
+        return m;
+    }
+}
+
+/** Largest-remainder. Everyone gets the floor; leftover paise go to whoever
+ *  was rounded down hardest. Always sums exactly back to the total. */
+final class Distributor {
+    static List<Split> distribute(long total, SplitRequest req) {
+        var w = req.weights(total);
+        long W = w.values().stream().mapToLong(Long::longValue).sum();
+        record Part(User user, long base, long rem) {}
+        var parts = new ArrayList<Part>();
+        long assigned = 0;
+        for (User u : req.participants()) {
+            long num = total * w.get(u);
+            parts.add(new Part(u, num / W, num % W));
+            assigned += num / W;
+        }
+        long leftover = total - assigned;
+        var extra = parts.stream()
+                .sorted(Comparator.comparingLong(Part::rem).reversed()
+                        .thenComparing(p -> p.user().id()))
+                .limit(leftover).map(Part::user).collect(java.util.stream.Collectors.toSet());
+        return parts.stream()
+                .map(p -> new Split(p.user(), p.base() + (extra.contains(p.user()) ? 1 : 0)))
+                .toList();
     }
 }
 
@@ -86,14 +113,13 @@ class SplitwiseService {
     private final BalanceSheet sheet = new BalanceSheet();        // derived state
     private int seq = 0;
 
-    Expense addExpense(String desc, long amount, User paidBy,
-                       List<User> participants, SplitStrategy strategy) {
+    Expense addExpense(String desc, long amount, User paidBy, SplitRequest how) {
 
         System.out.println("addExpense(\"" + desc + "\", " + Split.money(amount) + ", paidBy=" + paidBy + ")");
 
-        // STEP 1 — the strategy computes the splits. No Expense exists yet.
-        List<Split> splits = strategy.calculate(amount, participants, null);
-        System.out.println("  1. strategy produced splits: " + splits);
+        // STEP 1 — the request's weights are distributed. No Expense exists yet.
+        List<Split> splits = Distributor.distribute(amount, how);
+        System.out.println("  1. distributor produced splits: " + splits);
 
         // STEP 2 — construct the Expense. Its constructor validates the invariant.
         Expense e = new Expense("e" + (++seq), desc, amount, paidBy, splits);
@@ -140,11 +166,10 @@ public class SplitwiseFlow {
     public static void main(String[] args) {
         User alice = new User("u1", "Alice"), bob = new User("u2", "Bob"), carol = new User("u3", "Carol");
         SplitwiseService svc = new SplitwiseService();
-        SplitStrategy equal = new EqualSplit();
 
-        svc.addExpense("Dinner", 30000, alice, List.of(alice, bob, carol), equal);
-        svc.addExpense("Coffee", 15000, bob,   List.of(alice, bob),        equal);
-        Expense taxi = svc.addExpense("Taxi", 10000, carol, List.of(alice, bob, carol), equal);
+        svc.addExpense("Dinner", 30000, alice, new Equally(List.of(alice, bob, carol)));
+        svc.addExpense("Coffee", 15000, bob,   new Equally(List.of(alice, bob)));
+        Expense taxi = svc.addExpense("Taxi", 10000, carol, new Equally(List.of(alice, bob, carol)));
 
         svc.settle(bob, alice, 2500);
         svc.deleteExpense(taxi);

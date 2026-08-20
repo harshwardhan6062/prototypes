@@ -14,7 +14,7 @@ java SplitwiseFlow.java    # traced, shows object lifecycle step by step
 ```
 · add users; create groups
 · add an expense: payer, amount, participants, split type
-· split types: EQUAL, EXACT, PERCENT   (must be extensible)
+· split types: equal, exact, percent, shares   (must be extensible)
 · show balances — who owes whom
 · settle up
 · (stretch) simplify debts
@@ -47,34 +47,56 @@ final class Expense {                          // immutable event
 **Money is `long` in paise, never `double`.** `0.1 + 0.2 != 0.3`, and a lost
 paisa per expense compounds. `BigDecimal` is the alternative — correct, heavier.
 
-## 3. Split strategies
+## 3. How to split
 
-The extensibility question. Strategy pattern:
+Every split type is the **same operation** — hand out `total` in proportion to
+some weights. Only the weights differ:
+
+```
+Equally    weights all 1
+ByPercent  weights are the percentages
+ByAmount   weights are the amounts themselves
+ByShares   weights are the share counts
+```
+
+So the contract is one method returning weights, and rounding gets solved once
+rather than re-derived per strategy:
 
 ```java
-interface SplitStrategy {
-    List<Split> calculate(long amount, List<User> participants, List<Double> values);
+sealed interface SplitRequest {
+    Map<User, Long> weights(long total);   // relative; absolute scale irrelevant
+    List<User> participants();             // stable order, reproducible rounding
 }
 ```
 
+Each variant is a record holding a `Map` keyed by `User`, so the person and
+their value are one thing and cannot desync. `ByPercent` validates in its
+compact constructor, so an invalid request cannot be constructed at all.
+
 ```java
-class EqualSplit implements SplitStrategy {
-    public List<Split> calculate(long amount, List<User> users, List<Double> ignored) {
-        long base = amount / users.size(), rem = amount % users.size();
-        List<Split> out = new ArrayList<>();
-        for (int i = 0; i < users.size(); i++)
-            out.add(new Split(users.get(i), base + (i < rem ? 1 : 0)));   // spread the remainder
-        return out;
+record ByPercent(LinkedHashMap<User, Double> pct) implements SplitRequest {
+    public ByPercent {
+        double sum = pct.values().stream().mapToDouble(Double::doubleValue).sum();
+        if (Math.abs(sum - 100.0) > 1e-9)
+            throw new IllegalArgumentException("percentages sum to " + sum + ", must be 100");
     }
+    ...
 }
 ```
 
-**The rounding answer:** ₹100 split three ways is 33.34 / 33.33 / 33.33. Someone
-must absorb the extra paisa, so distribute the remainder one paisa at a time and
-the splits always sum exactly to the total. Interviewers look for this.
+**Rounding, once, in the distributor.** Largest-remainder: everyone gets the
+floor of their share, the leftover paise go to whoever was rounded down hardest,
+ties broken by user id so it is deterministic.
 
-`SplitStrategyFactory` maps `SplitType -> SplitStrategy` so the enum-to-class
-knowledge lives in one place.
+```
+₹100 / 3   ->  [₹33.34, ₹33.33, ₹33.33]   sums exactly
+₹0.10 / 3  ->  [₹0.04, ₹0.03, ₹0.03]      sums exactly
+₹0.01 / 3  ->  [₹0.01, ₹0.00, ₹0.00]      sums exactly
+```
+
+Interviewers look for the rounding answer specifically. See
+[`SPLIT-CONTRACT.md`](./SPLIT-CONTRACT.md) for the interface this replaced and
+why.
 
 ## 4. Balances
 
@@ -99,7 +121,7 @@ balances for reads.
 This is the part people get fuzzy on. Order matters:
 
 ```
-1. strategy computes the splits        <- no Expense exists yet
+1. distributor turns weights into splits  <- no Expense exists yet
 2. Expense constructed FROM them       <- constructor validates sum == amount
 3. appended to the log                 <- frozen forever, never edited
 4. deltas applied to the balance sheet
@@ -137,11 +159,16 @@ greedy is the practical answer. That line scores.
 ## 7. Patterns — name them explicitly
 
 ```
-Strategy   split algorithms — new one is a new class, not an edit
-Factory    SplitType -> SplitStrategy
-Facade     SplitwiseService hides the subsystem
-Observer   notifications on expense added        (mention as an extension)
+Polymorphic request  each SplitRequest variant supplies its own weights;
+                     adding one is a new record, not an edit anywhere
+Facade               SplitwiseService hides the subsystem
+Observer             notifications on expense added   (mention as an extension)
 ```
+
+Note this is deliberately **not** textbook GoF Strategy. The varying behaviour is
+still behind an interface, it has just been attached to the data it needs, so the
+two cannot be mismatched. Worth saying out loud — see
+[`SPLIT-CONTRACT.md`](./SPLIT-CONTRACT.md).
 
 ## 8. Edge cases — raise them before being asked
 
@@ -164,9 +191,10 @@ construction, with no rollback path to get wrong.
 ```
 main / API          "add a ₹300 dinner, split equally"
    |
-SplitwiseService    orchestrates: strategy -> Expense -> log -> deltas
+SplitwiseService    orchestrates: distribute -> Expense -> log -> deltas
    |
-SplitStrategy       computes the splits          (swappable)
+SplitRequest        supplies weights             (one record per split type)
+Distributor         weights -> exact paise       (rounding, in one place)
    |
 Expense             validates + freezes          (immutable event)
    |
@@ -179,17 +207,19 @@ Nothing above `BalanceSheet` knows how balances are stored; nothing below
 ## The 60-second opener
 
 > Users, Groups, Expenses. An expense has a payer, an amount, and a list of
-> splits that must sum exactly to the amount. Split types go behind a
-> **Strategy** interface so adding one is a new class, not an edit. Money is a
-> **long in paise** — never a double — and on uneven divides I distribute the
-> remainder paisa by paisa so the splits always reconcile. Balances are stored
+> splits that must sum exactly to the amount. Every split type is really the
+> same operation — hand out the total in proportion to weights — so each type is
+> just a **request object supplying weights**, and rounding is solved once in a
+> shared distributor. Money is a **long in paise**, never a double, and leftover
+> paise go to whoever was rounded down hardest so splits always reconcile.
+> Balances are stored
 > **net per pair** for O(1) reads, with the expense log kept for history. Debt
 > simplification is greedy, since the exact minimum is NP-hard.
 
 ## Sample output
 
 ```
-── 3. EXACT split — Bob pays ₹500, uneven shares ───────────
+── 3. ByAmount — Bob pays ₹500, uneven shares ──────────────
   splits: [Alice ₹150.00, Bob ₹250.00, Carol ₹100.00]
     Carol owes Alice ₹100.00
     Carol owes Bob ₹100.00
