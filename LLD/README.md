@@ -19,6 +19,8 @@ java patterns/AbstractFactoryDemo.java
 | [`splitwise/DESIGN.md`](./splitwise/DESIGN.md) | The interview answer, in delivery order |
 | [`splitwise/Splitwise.java`](./splitwise/Splitwise.java) | Complete — 3 split types, balances, settle, simplify, validation |
 | [`splitwise/SplitwiseFlow.java`](./splitwise/SplitwiseFlow.java) | Same design, traced, to see the object lifecycle |
+| [`splitwise/SPLIT-CONTRACT.md`](./splitwise/SPLIT-CONTRACT.md) | Critique of the first split interface, and a better one |
+| [`splitwise/SplitV2.java`](./splitwise/SplitV2.java) | The improved contract, runnable |
 | [`patterns/builder.md`](./patterns/builder.md) | Why the entity can't be its own builder |
 | [`patterns/abstract-factory.md`](./patterns/abstract-factory.md) | Families of matching products |
 | [`patterns/AbstractFactoryDemo.java`](./patterns/AbstractFactoryDemo.java) | Runnable |
