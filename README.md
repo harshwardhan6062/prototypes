@@ -26,6 +26,8 @@ Companion to the notes in [`system-design`](https://github.com/harshwardhan6062/
 
 | [`LLD`](./LLD) | Low-level design (Java) | Splitwise, rate limiter, Builder, Abstract Factory — notes plus runnable code |
 
+| [`opentelemetry-basics`](./opentelemetry-basics) | OpenTelemetry, tracing | Two services, one distributed trace — what a trace shows that a metric cannot, and why the Collector exists |
+
 ## Ground rules
 
 - **Minimal.** Small enough to read top to bottom in one sitting.
